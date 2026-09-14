@@ -27,10 +27,6 @@ Model sees: [REDACTED:ENV:DATABASE_PASSWORD]
 
 ## Install
 
-### Option A: One-line install (recommended)
-
-Installs plugin, registers in config, scans for secrets, lets you add custom patterns — all in one script:
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Herdanis/the-vanishing-duck/main/install.sh | bash
 ```
@@ -50,46 +46,6 @@ The script:
 5. Lets you add custom secret values + regex patterns interactively
 6. Tests scrubbing
 7. Shows summary
-
-### Option B: Manual
-
-**npm:**
-
-```bash
-npm install -g the-vanishing-duck
-```
-
-```jsonc
-{
-  "plugin": [
-    "the-vanishing-duck"
-  ]
-}
-```
-
-**Git URL:**
-
-```jsonc
-{
-  "plugin": [
-    "the-vanishing-duck@git+https://github.com/Herdanis/the-vanishing-duck.git"
-  ]
-}
-```
-
-**Local clone:**
-
-```bash
-git clone https://github.com/Herdanis/the-vanishing-duck.git ~/.config/opencode/plugins/the-vanishing-duck
-```
-
-```jsonc
-{
-  "plugin": [
-    "./plugins/the-vanishing-duck/plugin.ts"
-  ]
-}
-```
 
 Restart OpenCode after installing.
 
