@@ -1,0 +1,45 @@
+{
+  "name": "the-vanishing-duck",
+  "version": "0.1.0",
+  "description": "OpenCode plugin — runtime secret scrubbing for AI coding agents. Redacts secrets from tool output and chat before they reach the model.",
+  "type": "module",
+  "main": "plugin.ts",
+  "exports": {
+    ".": "./plugin.ts",
+    "./plugin": "./plugin.ts"
+  },
+  "files": [
+    "plugin.ts",
+    "secrets.local.template",
+    "README.md"
+  ],
+  "keywords": [
+    "opencode",
+    "plugin",
+    "security",
+    "redaction",
+    "secrets",
+    "pii",
+    "scrubbing",
+    "ai-safety",
+    "privacy"
+  ],
+  "license": "MIT",
+  "author": "Herdanis",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Herdanis/the-vanishing-duck.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Herdanis/the-vanishing-duck/issues"
+  },
+  "homepage": "https://github.com/Herdanis/the-vanishing-duck#readme",
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    }
+  }
+}
