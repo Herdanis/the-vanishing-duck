@@ -27,13 +27,37 @@ Model sees: [REDACTED:ENV:DATABASE_PASSWORD]
 
 ## Install
 
-### Option A: npm (recommended)
+### Option A: One-line install (recommended)
+
+Installs plugin, registers in config, scans for secrets, lets you add custom patterns — all in one script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Herdanis/the-vanishing-duck/main/install.sh | bash
+```
+
+Or clone + run:
+
+```bash
+git clone https://github.com/Herdanis/the-vanishing-duck.git
+bash the-vanishing-duck/install.sh
+```
+
+The script:
+1. Clones repo to `~/.config/opencode/plugins/the-vanishing-duck/`
+2. Registers plugin in `opencode.jsonc`
+3. Creates data dir at `~/.config/the-vanishing-duck/`
+4. Scans env vars, `.env` files, config apiKey values
+5. Lets you add custom secret values + regex patterns interactively
+6. Tests scrubbing
+7. Shows summary
+
+### Option B: Manual
+
+**npm:**
 
 ```bash
 npm install -g the-vanishing-duck
 ```
-
-Then add to your `opencode.jsonc`:
 
 ```jsonc
 {
@@ -43,9 +67,7 @@ Then add to your `opencode.jsonc`:
 }
 ```
 
-### Option B: Git URL
-
-Add directly to `opencode.jsonc`:
+**Git URL:**
 
 ```jsonc
 {
@@ -55,7 +77,7 @@ Add directly to `opencode.jsonc`:
 }
 ```
 
-### Option C: Local clone
+**Local clone:**
 
 ```bash
 git clone https://github.com/Herdanis/the-vanishing-duck.git ~/.config/opencode/plugins/the-vanishing-duck
