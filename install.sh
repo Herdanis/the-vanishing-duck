@@ -17,7 +17,7 @@ DATA_DIR="${VANISHING_DUCK_DIR:-$HOME/.config/the-vanishing-duck}"
 SECRETS_FILE="$DATA_DIR/secrets.local"
 LOG_FILE="$DATA_DIR/redaction.log"
 CONFIG_FILE=""
-PLUGIN_ENTRY="the-vanishing-duck@git+https://github.com/Herdanis/the-vanishing-duck.git"
+PLUGIN_ENTRY="$CLONE_DIR"
 
 # ============================================
 # Helpers
@@ -89,71 +89,25 @@ else
 fi
 
 # ============================================
-# Step 3: Find / create config
+# Step 3: Register plugin
 # ============================================
 
 printf "\n"
-info "Step 3: Registering plugin in opencode config"
+info "Step 3: Register plugin in opencode config"
 
 if find_config; then
     ok "Config found: $CONFIG_FILE"
 else
-    warn "No opencode config found. Creating one at ~/.config/opencode/opencode.jsonc"
-    mkdir -p "$HOME/.config/opencode"
     CONFIG_FILE="$HOME/.config/opencode/opencode.jsonc"
-    printf '{\n  "$schema": "https://opencode.ai/config.json",\n  "plugins": []\n}\n' > "$CONFIG_FILE"
-    ok "Config created"
+    warn "No opencode config found. Create $CONFIG_FILE and add the line below."
 fi
 
-if grep -q "the-vanishing-duck" "$CONFIG_FILE" 2>/dev/null; then
+if [[ -f "$CONFIG_FILE" ]] && grep -q "the-vanishing-duck" "$CONFIG_FILE" 2>/dev/null; then
     ok "Plugin already registered in config"
 else
-    info "Registering plugin in $CONFIG_FILE..."
-
-    if grep -q '"plugins"' "$CONFIG_FILE"; then
-        if command -v python3 >/dev/null 2>&1; then
-            python3 - "$CONFIG_FILE" << 'PY'
-import json, sys, re
-
-path = sys.argv[1]
-with open(path, "r") as f:
-    text = f.read()
-
-clean = re.sub(r'//.*?$', '', text, flags=re.MULTILINE)
-clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
-
-try:
-    cfg = json.loads(clean)
-except json.JSONDecodeError as e:
-    print(f"ERROR: {e}", file=sys.stderr)
-    sys.exit(1)
-
-plugins = cfg.get("plugins", [])
-entry = "the-vanishing-duck@git+https://github.com/Herdanis/the-vanishing-duck.git"
-if entry not in plugins:
-    plugins.append(entry)
-    cfg["plugins"] = plugins
-
-with open(path, "w") as f:
-    json.dump(cfg, f, indent=2)
-    f.write("\n")
-
-print("OK")
-PY
-            if [[ $? -eq 0 ]]; then
-                ok "Plugin registered"
-            else
-                warn "Auto-edit failed. Add manually to the plugins array:"
-                printf '    "%s"\n' "$PLUGIN_ENTRY"
-            fi
-        else
-            warn "python3 not found. Add manually to the plugins array:"
-            printf '    "%s"\n' "$PLUGIN_ENTRY"
-        fi
-    else
-        warn "No plugins array found. Add manually:"
-        printf '  "plugins": [\n    "%s"\n  ]\n' "$PLUGIN_ENTRY"
-    fi
+    warn "Add this line to the \"plugins\" array in $CONFIG_FILE by hand:"
+    printf "\n    \"%s\",\n\n" "$PLUGIN_ENTRY"
+    info "Nothing in the config is edited automatically."
 fi
 
 # ============================================

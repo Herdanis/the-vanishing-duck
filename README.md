@@ -6,24 +6,56 @@ Secrets stay local. The model sees `[REDACTED:TYPE]` placeholders only.
 
 ## What it does
 
-Intercepts tool output (bash, read, grep, glob, webfetch) and user chat messages, redacting sensitive values **before** they reach the AI model. Runs as code — zero context cost, AI never sees instructions, cannot be bypassed.
+Intercepts tool output and user chat messages, redacting sensitive values
+**before** they reach the AI model. Runs as code — zero context cost, AI never
+sees instructions.
 
 ```
-AI runs:  echo $DATABASE_PASSWORD
-Output:   super_secret_123
+AI runs:    echo $DATABASE_PASSWORD
 Model sees: [REDACTED:ENV:DATABASE_PASSWORD]
 ```
 
-## Six detection strategies
+## Detection
 
-| # | Strategy | What it catches |
-|---|----------|----------------|
-| 1 | Env vars | `DATABASE_PASSWORD=pass123` in `process.env` |
-| 2 | Config file | `apiKey` values in `opencode.json` / `opencode.jsonc` |
-| 3 | `.env` files | `DB_PASSWORD=mypass123` in project `.env` files |
-| 4 | Custom patterns | Literal values + regex from `secrets.local` file |
-| 5 | Known formats | AWS `AKIA*`, GitHub `ghp_*`, OpenAI `sk-*`, JWT, PEM keys, DB conn strings, Google `AIza*`, Slack `xox*` |
-| 6 | Inline KV detection | `password: xxx`, `secret=xxx` in any output — catches secrets with no format pattern |
+| Strategy | What it catches |
+|----------|-----------------|
+| Env vars | Names matching `SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|API_KEY|PRIVATE_KEY|ACCESS_KEY|AUTH` (value > 8 chars) |
+| Config file | Any `opencode.json`/`opencode.jsonc` string value whose key looks secret (`apiKey`, `Authorization`, `DB_PASSWORD`) |
+| `.env` files | `.env`, `.env.local`, `.env.production`, `.env.development`, `.env.staging` in the project root and one directory down (`node_modules`, `.git`, `dist`, `build`, `.venv`, `vendor` skipped) |
+| Custom patterns | Literal values + regex from `secrets.local` |
+| Known formats | OpenAI/Groq `sk-`, `gsk_`, Stripe, AWS, GitHub, GitLab, npm, PyPI, HuggingFace, DigitalOcean, Shopify, SendGrid, Slack, Google, Twilio, Telegram, Supabase `sbp_`, Replicate `r8_`, Azure `AccountKey=`, JWT, `Bearer`, PEM keys, connection strings |
+| Inline key/value | `db_password: x`, `AWS_SECRET_ACCESS_KEY=z`, `awsSecretAccessKey: w`, quoted keys (`"api_key": "..."`) |
+| CLI flags | `--password hunter2`, `--token=abc123` |
+
+### Key matching
+
+A key is split on camelCase and non-alphanumerics, then lowercased. It counts as
+secret if any part is a known word (`password`, `passwd`, `pass`, `pwd`,
+`passphrase`, `passcode`, `pin`, `otp`, `secret`, `token`, `apikey`,
+`credential`, `privatekey`, `accesskey`, `secretkey`, `clientsecret`, `auth`,
+`authorization`, `bearer`, `cookie`, `dsn`) or if two adjacent parts form a
+known pair (`api key`, `secret key`, `private key`, `access key`,
+`signing key`, `encryption key`, `master key`, `client secret`,
+`refresh token`, `auth token`, `session id`, `conn string`,
+`connection string`).
+
+So prefixed keys (`db_password`), suffixed keys (`secret_key`), and camelCase
+keys (`awsSecretAccessKey`) are all caught.
+
+### Value guard
+
+A matched value is left alone when it reads like code or config:
+
+- `getToken()`, `path\\to\\file`, template strings (`${SECRET}`), backticks
+- dotted chains (`process.env.PASSWORD`, `req.headers.token`)
+- bare all-caps identifiers (`PASSWORD`)
+- plain URLs (`https://...`)
+- `[REDACTED:...]` already
+- false positives: `true`, `null`, `changeme`, `test`, `bearer`, `optional`,
+  `unset`, etc.
+
+`const token = getToken()`, `password: process.env.PASSWORD`, and
+`secret: ${SECRET}` pass through untouched; real values do not.
 
 ## Install
 
@@ -39,15 +71,22 @@ bash the-vanishing-duck/install.sh
 ```
 
 The script:
-1. Clones repo to `~/.config/opencode/plugins/the-vanishing-duck/`
-2. Registers plugin in `opencode.jsonc`
-3. Creates data dir at `~/.config/the-vanishing-duck/`
-4. Scans env vars, `.env` files, config apiKey values
-5. Lets you add custom secret values + regex patterns interactively
-6. Tests scrubbing
-7. Shows summary
 
-Restart OpenCode after installing.
+1. Clones the repo to `~/.config/opencode/plugins/the-vanishing-duck/`
+2. Finds your opencode config and prints the line to add by hand
+3. Creates the data dir at `~/.config/the-vanishing-duck/`
+4. Scans env vars, `.env` files, config values
+5. Lets you add custom literals + regex patterns interactively
+6. Tests scrubbing
+
+The script never edits `opencode.jsonc`. Register the plugin yourself by adding
+the printed path (with a trailing comma) to the `plugins` array:
+
+```json
+  "/Users/you/.config/opencode/plugins/the-vanishing-duck",
+```
+
+OpenCode loads local plugin paths; restart after adding it.
 
 ## Custom patterns
 
@@ -63,74 +102,65 @@ regex: \bcompany_[a-z0-9]{20}\b as COMPANY_TOKEN
 regex: \bint_[a-z0-9]{16}\b as INTERNAL_ID
 ```
 
+The file is re-read when its mtime changes, so edits apply without a restart.
+
 ## Configuration
 
 | Env var | Default | Description |
 |---------|---------|-------------|
 | `VANISHING_DUCK_DIR` | `~/.config/the-vanishing-duck` | Data directory (log, custom patterns) |
-| `VANISHING_DUCK_MAX_SIZE` | `512000` | Max output size to scrub (bytes). Larger outputs skipped for perf |
+| `VANISHING_DUCK_MAX_SIZE` | `512000` | Bytes above which the literal pass is skipped |
 
-## How it works
+## Hooks
 
-### Tool output scrubbing
+### Tool output
 
-Hooks `tool.execute.after` — fires after bash/read/grep/glob/webfetch runs, before output enters model context.
+Hooks `tool.execute.after`, before output enters model context. Every tool is
+scrubbed except `todowrite`, `todoread`, and `skill`. Error results
+(`status === "error"`) are scrubbed too.
 
-```
-bash runs `cat .env`
-  → output: "DB_PASSWORD=mypass123"
-  → plugin intercepts
-  → replaces: "DB_PASSWORD=[REDACTED:KV:PASSWORD]"
-  → model receives: redacted version
-  → local log: what was scrubbed (you see it, model doesn't)
-```
+Text parts in `result.content` are scrubbed. If there is no text part, the
+plugin falls back to `result.output.output`. Both are never scrubbed in the
+same run.
 
-### Chat message scrubbing
-
-Hooks `chat.message` — fires when user sends a message, before model sees it.
+When redactions happen, the last scrubbed text gets a notice:
 
 ```
-User types: "my API key is sk-1234567890abcdef"
-  → plugin intercepts
-  → replaces: "my API key is [REDACTED:API_KEY]"
-  → model receives: redacted version
+[the-vanishing-duck: 3 value(s) redacted]
 ```
 
-### Inline KV detection
+### Size policy
 
-Catches secrets in config files, YAML, JSON, `.env` output — even values not pre-collected:
+Regex, key/value and flag passes always run. Above `MAX_SCRUB_SIZE` (512 KB),
+the literal-map pass is skipped for speed; the notice then reads
+`(literal pass skipped: output too large)`.
 
-```yaml
-database:
-  password: mySecretPass123      →  password: [REDACTED:KV:PASSWORD]
-  secret_key: abc123def456       →  secret_key: [REDACTED:KV:SECRET_KEY]
-```
+### Chat messages
 
-```json
-{"api_key": "sk-real-key-here"}  →  {"api_key": "[REDACTED:KV:API_KEY]"}
-```
-
-Matches keys containing: `password`, `secret`, `token`, `api_key`, `credential`, `private_key`, `access_key`, `auth_token`. Skips false positives (`true`, `null`, `changeme`, `test`, etc.).
+Hooks the `prompt` event and scrubs `event.prompt.text` before the model sees
+it.
 
 ## Redaction log
 
-All redactions logged locally at `~/.config/the-vanishing-duck/redaction.log`:
+Local log at `~/.config/the-vanishing-duck/redaction.log`:
 
 ```
-[2026-09-14T10:30:00Z] session=abc123 tool=bash redacted=ENV:DATABASE_PASSWORD (sup...123)
-[2026-09-14T10:31:00Z] session=abc123 tool=chat.message redacted=KV:API_KEY (sk-1...def)
+[2026-09-14T10:30:00Z] session=abc123 tool=shell redacted=ENV:DATABASE_PASSWORD#1f3c9a2b
 ```
 
-Preview shows first 3 + last 3 chars only. Full secret never logged.
+Each entry records the label plus a short SHA-256 of the value. No raw value and
+no preview ever reaches the log. The file is chmod `600`. When it passes 1 MB it
+is renamed to `redaction.log.1` and a fresh log starts.
 
 ## Limitations
 
 - Binary/compiled files — output is binary garbage, regex won't match
-- Very short passwords (<4 chars) — KV regex requires value ≥4 chars to avoid false positives
+- Very short values (<4 chars) — not matched, to avoid false positives
 - Base64/encrypted secrets — no readable pattern to match
 - Secrets in images/PDFs — not scanned
 
-No tool catches 100%. This covers: env vars, `.env` files, config files, known formats, inline KV pairs, and custom patterns.
+No tool catches 100%. This covers env vars, `.env` files, config files, known
+formats, inline key/value pairs, CLI flags, and custom patterns.
 
 ## License
 
