@@ -101,7 +101,7 @@ else
     warn "No opencode config found. Creating one at ~/.config/opencode/opencode.jsonc"
     mkdir -p "$HOME/.config/opencode"
     CONFIG_FILE="$HOME/.config/opencode/opencode.jsonc"
-    printf '{\n  "$schema": "https://opencode.ai/config.json",\n  "plugin": []\n}\n' > "$CONFIG_FILE"
+    printf '{\n  "$schema": "https://opencode.ai/config.json",\n  "plugins": []\n}\n' > "$CONFIG_FILE"
     ok "Config created"
 fi
 
@@ -110,7 +110,7 @@ if grep -q "the-vanishing-duck" "$CONFIG_FILE" 2>/dev/null; then
 else
     info "Registering plugin in $CONFIG_FILE..."
 
-    if grep -q '"plugin"' "$CONFIG_FILE"; then
+    if grep -q '"plugins"' "$CONFIG_FILE"; then
         if command -v python3 >/dev/null 2>&1; then
             python3 - "$CONFIG_FILE" << 'PY'
 import json, sys, re
@@ -128,11 +128,11 @@ except json.JSONDecodeError as e:
     print(f"ERROR: {e}", file=sys.stderr)
     sys.exit(1)
 
-plugins = cfg.get("plugin", [])
+plugins = cfg.get("plugins", [])
 entry = "the-vanishing-duck@git+https://github.com/Herdanis/the-vanishing-duck.git"
 if entry not in plugins:
     plugins.append(entry)
-    cfg["plugin"] = plugins
+    cfg["plugins"] = plugins
 
 with open(path, "w") as f:
     json.dump(cfg, f, indent=2)
@@ -143,16 +143,16 @@ PY
             if [[ $? -eq 0 ]]; then
                 ok "Plugin registered"
             else
-                warn "Auto-edit failed. Add manually to the plugin array:"
+                warn "Auto-edit failed. Add manually to the plugins array:"
                 printf '    "%s"\n' "$PLUGIN_ENTRY"
             fi
         else
-            warn "python3 not found. Add manually to the plugin array:"
+            warn "python3 not found. Add manually to the plugins array:"
             printf '    "%s"\n' "$PLUGIN_ENTRY"
         fi
     else
-        warn "No plugin array found. Add manually:"
-        printf '  "plugin": [\n    "%s"\n  ]\n' "$PLUGIN_ENTRY"
+        warn "No plugins array found. Add manually:"
+        printf '  "plugins": [\n    "%s"\n  ]\n' "$PLUGIN_ENTRY"
     fi
 fi
 

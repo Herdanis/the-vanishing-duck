@@ -15,7 +15,6 @@
 // Zero context cost — runs as code, AI never sees instructions.
 // Configurable via env vars: VANISHING_DUCK_DIR, VANISHING_DUCK_MAX_SIZE
 
-import type { Plugin } from "@opencode-ai/plugin"
 import { readFileSync, existsSync, appendFileSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
 import { homedir } from "node:os"
@@ -54,7 +53,7 @@ const SECRET_REGEXES: { re: RegExp; label: string }[] = [
 ]
 
 // Tools whose output we scrub.
-const SCRUB_TOOLS = new Set(["bash", "read", "grep", "glob", "webfetch"])
+const SCRUB_TOOLS = new Set(["shell", "read", "grep", "glob", "webfetch"])
 
 // .env files to scan for secrets (relative to project root).
 const ENV_FILES = [".env", ".env.local", ".env.production", ".env.development", ".env.staging"]
@@ -229,63 +228,95 @@ function logRedactions(redactions: string[], tool: string, sessionId: string) {
 // Plugin
 // ============================================
 
-export const VanishingDuck: Plugin = async ({ directory }) => {
-  const secrets = new Map<string, string>()
-  for (const [v, l] of collectEnvSecrets()) secrets.set(v, l)
-  for (const [v, l] of collectConfigSecrets()) secrets.set(v, l)
-  for (const [v, l] of collectEnvFileSecrets(directory)) secrets.set(v, l)
+type ToolHookEvent = {
+  tool: string
+  sessionID: string
+  status: "completed" | "error"
+  result?: {
+    content?: { type: string; text?: string }[]
+    output?: { output?: string }
+  }
+}
 
-  const custom = collectCustomPatterns()
-  for (const [v, l] of custom.literals) secrets.set(v, l)
-  const allRegexes = [...SECRET_REGEXES, ...custom.regexes]
+type PromptHookEvent = {
+  sessionID: string
+  prompt: { text: string }
+}
 
-  return {
+type PluginContext = {
+  location: { directory: string }
+  tool: { hook(name: "execute.after", cb: (event: ToolHookEvent) => void): Promise<unknown> }
+  session: { hook(name: "prompt", cb: (event: PromptHookEvent) => void): Promise<unknown> }
+}
+
+function notice(count: number): string {
+  return (
+    `\n\n[the-vanishing-duck: ${count} redaction(s). ` +
+    `Sensitive values replaced with [REDACTED:*]. ` +
+    `Local log: ${LOG_PATH}]`
+  )
+}
+
+export default {
+  id: "the-vanishing-duck",
+  async setup(ctx: PluginContext) {
+    const secrets = new Map<string, string>()
+    for (const [v, l] of collectEnvSecrets()) secrets.set(v, l)
+    for (const [v, l] of collectConfigSecrets()) secrets.set(v, l)
+    for (const [v, l] of collectEnvFileSecrets(ctx.location.directory)) secrets.set(v, l)
+
+    const custom = collectCustomPatterns()
+    for (const [v, l] of custom.literals) secrets.set(v, l)
+    const allRegexes = [...SECRET_REGEXES, ...custom.regexes]
+
     // ── Tool output scrubbing ──────────────────────────────────────
-    // Bash/read/grep/glob/webfetch output → scrubbed before model
+    // Shell/read/grep/glob/webfetch content → scrubbed before model
     // sees it. Secrets stay local, model sees [REDACTED:*].
-    "tool.execute.after": async (input, output) => {
-      if (!SCRUB_TOOLS.has(input.tool)) return
+    await ctx.tool.hook("execute.after", (event) => {
+      if (event.status !== "completed" || !SCRUB_TOOLS.has(event.tool)) return
+      const result = event.result
+      if (!result) return
 
-      const text = output.output ?? ""
-      if (!text || text.length === 0) return
-      if (text.length > MAX_SCRUB_SIZE) return
+      const redactions: string[] = []
+      let lastText: { type: string; text?: string } | undefined
 
-      const { output: scrubbed, redactions } = scrub(text, secrets, allRegexes)
-
-      if (redactions.length > 0) {
-        output.output =
-          scrubbed +
-          `\n\n[the-vanishing-duck: ${redactions.length} redaction(s). ` +
-          `Sensitive values replaced with [REDACTED:*]. ` +
-          `Local log: ${LOG_PATH}]`
-        logRedactions(redactions, input.tool, input.sessionID ?? "unknown")
+      for (const part of result.content ?? []) {
+        if (part.type !== "text" || !part.text) continue
+        if (part.text.length > MAX_SCRUB_SIZE) continue
+        const scrubbed = scrub(part.text, secrets, allRegexes)
+        if (scrubbed.redactions.length === 0) continue
+        part.text = scrubbed.output
+        lastText = part
+        redactions.push(...scrubbed.redactions)
       }
-    },
+
+      const raw = result.output?.output
+      if (raw && raw.length <= MAX_SCRUB_SIZE) {
+        const scrubbed = scrub(raw, secrets, allRegexes)
+        if (scrubbed.redactions.length > 0 && result.output) {
+          result.output.output = scrubbed.output
+          redactions.push(...scrubbed.redactions)
+        }
+      }
+
+      if (redactions.length === 0) return
+      if (lastText?.text !== undefined) lastText.text += notice(redactions.length)
+      logRedactions(redactions, event.tool, event.sessionID ?? "unknown")
+    })
 
     // ── Chat message scrubbing ────────────────────────────────────
     // User-typed messages → scrubbed before model sees them. If user
     // pastes a secret into chat (intentionally or not), it gets
     // redacted. The model never sees the raw value.
-    "chat.message": async (input, output) => {
-      const parts = (output as any).parts ?? []
-      let totalRedactions: string[] = []
+    await ctx.session.hook("prompt", (event) => {
+      const text = event.prompt?.text
+      if (!text || text.length > MAX_SCRUB_SIZE) return
 
-      for (const part of parts) {
-        if (part.type !== "text" || !part.text) continue
-        if (part.text.length > MAX_SCRUB_SIZE) continue
+      const scrubbed = scrub(text, secrets, allRegexes)
+      if (scrubbed.redactions.length === 0) return
 
-        const { output: scrubbed, redactions } = scrub(part.text, secrets, allRegexes)
-        if (redactions.length > 0) {
-          part.text = scrubbed
-          totalRedactions = totalRedactions.concat(redactions)
-        }
-      }
-
-      if (totalRedactions.length > 0) {
-        logRedactions(totalRedactions, "chat.message", input.sessionID ?? "unknown")
-      }
-    },
-  }
+      event.prompt.text = scrubbed.output
+      logRedactions(scrubbed.redactions, "session.prompt", event.sessionID ?? "unknown")
+    })
+  },
 }
-
-export default VanishingDuck
